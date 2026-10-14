@@ -1,6 +1,7 @@
 # @nxlabs/agent-message-queue
 
-A topic message queue for Bun, in TypeScript source.
+A topic message queue for Bun, in TypeScript source, and the agent layer on top
+of it: messages that start agent sessions, one session per agent.
 
 - **Topics** hold messages in arrival order.
 - A consumer **claims** the oldest available message for a lease, handles it,
@@ -17,7 +18,7 @@ A topic message queue for Bun, in TypeScript source.
 
 ```json
 "dependencies": {
-  "@nxlabs/agent-message-queue": "github:nxlabscc/agent-message-queue#v0.1.0"
+  "@nxlabs/agent-message-queue": "github:nxlabscc/agent-message-queue#v0.2.0"
 }
 ```
 
@@ -70,6 +71,55 @@ await worker.stop();       // stops claiming, waits for the messages in hand
 `createSqliteQueue` also returns a `QueueInspector`: `topics()` (pending and
 in-flight counts per topic), `list(topic)` and `get(id)`. These read only; they
 claim nothing and count no attempt.
+
+## Agent messages
+
+`createAgentMessaging` runs agent sessions off the queue. Each message is for
+one agent; each topic runs one message at a time, oldest first; and an agent
+never has two sessions open.
+
+```ts
+import { createAgentMessaging, AlreadyQueued } from "@nxlabs/agent-message-queue";
+
+type Msg = { to: string; text: string };
+
+const agents = createAgentMessaging<Msg>({
+  queue,                                   // a Queue & QueueInspector, e.g. createSqliteQueue
+  agentOf: (payload, topic) => payload.to,
+  isBusy: (agent) => sessions.isOpen(agent),   // sessions this process did not start
+  startSession: async (message) => {
+    const run = await sessions.open(message.payload.to, message.payload.text);
+    if (run.lostTheRace) return null;      // busy after all: wait and try again
+    return { errored: run.errored };       // resolves when the session has ended
+  },
+  leaseMs: 5 * 60_000,
+  pollMs: 5_000,
+  busyPollMs: 5_000,
+  onError: (err, message) => console.error(message.id, err),
+});
+
+await agents.send("inbox", { to: "ancano", text: "hello" }, { key: (p) => p.text });
+agents.start(["inbox", "schedule"]);       // one worker per topic
+// ...
+await agents.view(["inbox", "schedule"]);  // every message, its agent, state and place in line
+await agents.stop();
+```
+
+- **One message at a time per topic.** The next message of a topic waits until
+  the one before it is acked.
+- **One session per agent.** Every worker of one `createAgentMessaging` holds the
+  agent while its session runs, so two topics wait for each other on the same
+  agent. `isBusy` answers for sessions opened elsewhere, and a `startSession`
+  that returns null waits again.
+- **A session that errored or threw** consumes its message and goes to `onError`.
+- **A stop** lets running sessions finish; a message waiting on a busy agent goes
+  back to the queue untouched.
+- **`send` with `key`** refuses a message whose key is already queued in the
+  topic, waiting or in flight, with `AlreadyQueued`.
+- **`view(topics)`** is the service behind a status page: each message with its
+  `agent`, its `state` — `waiting`, `taken`, `blocked` (its agent is busy),
+  `running` (its session) or `closing` (the session ended, the ack is pending) —
+  and its `position` while waiting. `phaseOf(id)` reads one.
 
 ## A new backend
 

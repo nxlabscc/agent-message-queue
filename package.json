@@ -1,7 +1,7 @@
 {
   "name": "@nxlabs/agent-message-queue",
-  "version": "0.1.0",
-  "description": "A topic message queue with leases, one message in flight per topic, a worker, and a SQLite backend. Bun, TypeScript source.",
+  "version": "0.2.0",
+  "description": "A topic message queue with leases, one message in flight per topic, a worker, a SQLite backend, and agent messages that start one session per agent. Bun, TypeScript source.",
   "type": "module",
   "license": "Apache-2.0",
   "repository": "github:nxlabscc/agent-message-queue",
